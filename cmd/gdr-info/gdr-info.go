@@ -100,7 +100,7 @@ func main() {
 			panic(err)
 		}
 		fmt.Printf("Transmitter ID: %v\n", tid)
-	} else if command == "rxmtrid" {
+	} else if command == "generic" {
 		devicefile := flag.Arg(1)
 		if devicefile == "" {
 			usageQuit()
@@ -114,21 +114,29 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+	} else if command == "rdpi" {
+		devicefile := flag.Arg(1)
+		if devicefile == "" {
+			usageQuit()
+		}
+		device, err := godexrcvr.OpenDevice(devicefile)
+		defer device.Close()
+		if err != nil {
+			panic(err)
+		}
+		partInfo, err := godexrcvr.ReadDatabasePartionInfo(device)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Printf("SchemaVersion:      %v\n", partInfo.SchemaVersion)
+		fmt.Printf("PageHeaderVersion:  %v\n", partInfo.PageHeaderVersion)
+		fmt.Printf("PageDataLength:     %v\n", partInfo.PageDataLength)
+		for _, partition := range partInfo.Partitions {
+			fmt.Printf("Partition:\n")
+			fmt.Printf("  Name: %v\n", partition.Name)
+			fmt.Printf("  Id: %v\n", partition.Id)
+			fmt.Printf("  RecordRevision: %v\n", partition.RecordRevision)
+			fmt.Printf("  RecordLength: %v\n", partition.RecordLength)
+		}
 	}
-
-	// else if command == "crc" {
-	// 	test := []byte{0x02, 0x06, 0x06, 0x03}
-
-	// 	fmt.Printf("X23: %v\n", crc.CalculateCRC(crc.X25, test))
-	// 	fmt.Printf("CCITT: %v\n", crc.CalculateCRC(crc.CCITT, test))
-	// 	fmt.Printf("CRC16: %v\n", crc.CalculateCRC(crc.CRC16, test))
-	// 	fmt.Printf("XMODEM: %v\n", crc.CalculateCRC(crc.XMODEM, test))
-	// 	fmt.Printf("XMODEM2: %v\n", crc.CalculateCRC(crc.XMODEM2, test))
-
-	// 	// fmt.Printf("CCITT: %v\n", crc16.ChecksumCCITT(test))
-	// 	// fmt.Printf("CCITTFalse: %v\n", crc16.ChecksumCCITTFalse(test))
-	// 	// fmt.Printf("IBM: %v\n", crc16.ChecksumIBM(test))
-	// 	// fmt.Printf("MBus: %v\n", crc16.ChecksumMBus(test))
-	// 	// fmt.Printf("SCSI: %v\n", crc16.ChecksumSCSI(test))
-	// }
 }

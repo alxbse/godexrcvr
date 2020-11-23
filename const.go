@@ -1,13 +1,24 @@
 package godexrcvr
 
+import "github.com/google/gousb"
+
 // SyncByte is a wire-signal for stuff
 var SyncByte = 0x01
 
-// GRCBLError represents an error
 type DexcomCmd byte
 
 // BASE_TIME = datetime.datetime(2009, 1, 1)
 // DEXCOM_EPOCH = 1230768000
+
+var (
+	DexcomVendor        = gousb.ID(0x22a3)
+	Gen4ReceiverProduct = gousb.ID(0x0047)
+)
+
+type DexcomPacket struct {
+	cmd     DexcomCmd
+	payload []byte
+}
 
 const (
 	CmdNull                       DexcomCmd = 0x00
@@ -101,6 +112,7 @@ func (cmd DexcomCmd) String() string {
 	case CmdReadClockMode:
 		return "CmdReadClockMode"
 	}
+	// TODO
 	return "CmdUNKNOWN"
 }
 
@@ -118,4 +130,18 @@ type FirmwareHeader struct {
 	BLEHardwareVersion string `xml:"BLEHardwareVersion,attr"`
 	BLEDeviceAddress   string `xml:"BLEDeviceAddress,attr"`
 	DexBootVersion     string `xml:"DexBootVersion,attr"`
+}
+
+type PartitionInfo struct {
+	SchemaVersion     string      `xml:"SchemaVersion,attr"`
+	PageHeaderVersion string      `xml:"PageHeaderVersion,attr"`
+	PageDataLength    string      `xml:"PageDataLength,attr"`
+	Partitions        []Partition `xml:"Partition"`
+}
+
+type Partition struct {
+	Name           string `xml:"Name,attr"`
+	Id             string `xml:"Id,attr"`
+	RecordRevision string `xml:"RecordRevision,attr"`
+	RecordLength   string `xml:"RecordLength,attr"`
 }
