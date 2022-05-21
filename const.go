@@ -1,6 +1,10 @@
 package godexrcvr
 
-import "github.com/google/gousb"
+import (
+	"fmt"
+
+	"github.com/google/gousb"
+)
 
 // SyncByte is a wire-signal for stuff
 var SyncByte = 0x01
@@ -64,6 +68,11 @@ const (
 	CmdReadSetupWizardState       DexcomCmd = 0x39
 	CmdReadChargerCurrentSetting  DexcomCmd = 0x3b
 	CmdWriteChargerCurrentSetting DexcomCmd = 0x3c
+)
+
+const (
+	RecordTypeManufacturingData = 0x0
+	RecordTypeEgvData           = 0x4
 )
 
 func (cmd DexcomCmd) String() string {
@@ -144,4 +153,22 @@ type Partition struct {
 	Id             string `xml:"Id,attr"`
 	RecordRevision string `xml:"RecordRevision,attr"`
 	RecordLength   string `xml:"RecordLength,attr"`
+}
+
+type GlucoseUnit byte
+
+const (
+	GlucoseUnitMmolL = 0x1
+	GlucoseUnitMgDl  = 0x2
+)
+
+func (u *GlucoseUnit) String() (string, error) {
+	switch *u {
+	case GlucoseUnitMmolL:
+		return "mmol/l", nil
+	case GlucoseUnitMgDl:
+		return "mg/dl", nil
+
+	}
+	return "", fmt.Errorf("unknown glucose unit")
 }

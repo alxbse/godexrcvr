@@ -1,9 +1,11 @@
 package godexrcvr
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/xml"
 	"fmt"
+	"io"
 
 	"github.com/google/gousb"
 
@@ -82,6 +84,7 @@ func buildPacket(cmd DexcomCmd, payload []byte) []byte {
 	packet[0] = 0x01
 	binary.LittleEndian.PutUint16(packet[1:3], packetLength)
 	packet[3] = byte(cmd)
+	copy(packet[4:4+payloadLength], payload[:])
 	checksum := checksumForPacket(packet[:packetLength-2])
 	binary.LittleEndian.PutUint16(packet[packetLength-2:], checksum)
 	return packet
@@ -268,4 +271,263 @@ func ReadDatabasePartionInfo(device *serial.Port) (*PartitionInfo, error) {
 		return nil, err
 	}
 	return partInfo, nil
+}
+
+func ReadManufacturingData(device *serial.Port) (*[]byte, error) {
+	packet := buildPacket(CmdReadDataPageRange, []byte{RecordTypeManufacturingData})
+	_, err := device.Write(packet)
+	if err != nil {
+		return nil, err
+	}
+	device.Flush()
+
+	pkt, err := ReadPacket(device)
+	if err != nil {
+		return nil, err
+	}
+	if pkt.cmd != CmdAck {
+		return nil, fmt.Errorf("command not acked")
+	}
+
+	fmt.Printf("cmd: %s, len: %d\n", pkt.cmd.String(), len(pkt.payload))
+	var first uint32
+	var second uint32
+	buf := bytes.NewReader(pkt.payload)
+	err = binary.Read(buf, binary.LittleEndian, &first)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Read(buf, binary.LittleEndian, &second)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("first: %d, second: %d\n", first, second)
+
+	bs := []any{
+		uint8(RecordTypeManufacturingData),
+		uint32(first),
+		uint8(1),
+	}
+
+	writer := new(bytes.Buffer)
+	for _, b := range bs {
+		err = binary.Write(writer, binary.LittleEndian, b)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	b := writer.Bytes()
+	fmt.Printf("b: %x, len: %d\n", b, len(b))
+
+	packet = buildPacket(CmdReadDataPages, b)
+	_, err = device.Write(packet)
+	if err != nil {
+		return nil, err
+	}
+	device.Flush()
+
+	pkt, err = ReadPacket(device)
+	if err != nil {
+		return nil, err
+	}
+	if pkt.cmd != CmdAck {
+		return nil, fmt.Errorf("command not acked")
+	}
+
+	var header struct {
+		Index      uint32
+		Number     uint32
+		RecordType uint8
+		Revision   uint8
+		PageNumber uint32
+		R1         uint32
+		R2         uint32
+		R3         uint32
+		CRC        uint16
+		HACK       uint32
+		MORE       uint32
+	}
+
+	buf = bytes.NewReader(pkt.payload)
+	err = binary.Read(buf, binary.LittleEndian, &header)
+	if err != nil {
+		return nil, err
+	}
+	xmlBytes := make([]byte, buf.Len())
+	x := buf.Len()
+	y, err := buf.Read(xmlBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("x: %d, y: %d, header: %#v, payload: '%s'\n", x, y, header, xmlBytes)
+	return &pkt.payload, nil
+}
+
+type PageRange struct {
+	Start uint32
+	End   uint32
+}
+
+type ReadDataPage struct {
+	RecordType uint8
+	Page       uint32
+	Unknown    uint8
+}
+
+type G6EgvRecord struct {
+	SystemTime  uint32
+	DisplayTime uint32
+	Value       uint16
+	Unknown1    uint8
+	Unknown2    uint8
+	Unknown3    uint8
+	Unknown4    uint8
+	Unknown5    uint8
+	Unknown6    uint8
+	Unknown7    uint8
+	Unknown8    uint8
+	Unknown9    uint8
+	Unknown10   byte
+	Unknown11   uint8
+	Unknown12   uint8
+	Unknown13   uint8
+	Unknown14   uint16
+}
+
+type DatabasePageHeader struct {
+	Index      uint32
+	Number     uint32
+	RecordType uint8
+	Revision   uint8
+	PageNumber uint32
+	R1         uint32
+	R2         uint32
+	R3         uint32
+	CRC        uint16
+}
+
+type Record struct {
+	SystemTime  time.Time
+	DisplayTime time.Time
+	Value       int
+}
+
+func ReadEgvData(device *serial.Port) (*[]Record, error) {
+	packet := buildPacket(CmdReadDataPageRange, []byte{RecordTypeEgvData})
+	_, err := device.Write(packet)
+	if err != nil {
+		return nil, err
+	}
+	device.Flush()
+
+	pkt, err := ReadPacket(device)
+	if err != nil {
+		return nil, err
+	}
+	if pkt.cmd != CmdAck {
+		return nil, fmt.Errorf("command not acked")
+	}
+
+	var pageRange PageRange
+	buf := bytes.NewReader(pkt.payload)
+	err = binary.Read(buf, binary.LittleEndian, &pageRange)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("pageRange: Start: %d, End: %d\n", pageRange.Start, pageRange.End)
+	records := []Record{}
+	for page := pageRange.Start; page <= pageRange.End; page++ {
+		fmt.Printf("page: %d\n", page)
+		readDataPage := ReadDataPage{
+			RecordType: RecordTypeEgvData,
+			Page:       page,
+			Unknown:    1,
+		}
+
+		bufWriter := new(bytes.Buffer)
+		err = binary.Write(bufWriter, binary.LittleEndian, readDataPage)
+		if err != nil {
+			return nil, err
+		}
+
+		b := bufWriter.Bytes()
+
+		packet = buildPacket(CmdReadDataPages, b)
+		_, err = device.Write(packet)
+		if err != nil {
+			return nil, err
+		}
+		device.Flush()
+
+		pkt, err = ReadPacket(device)
+		if err != nil {
+			return nil, err
+		}
+		if pkt.cmd != CmdAck {
+			return nil, fmt.Errorf("command not acked")
+		}
+
+		fmt.Printf("payload: len: %d\n", len(pkt.payload))
+		buf = bytes.NewReader(pkt.payload)
+
+		var databasePageHeader DatabasePageHeader
+		err = binary.Read(buf, binary.LittleEndian, &databasePageHeader)
+		if err != nil {
+			return nil, err
+		}
+
+		fmt.Printf("index: %d, number: %d, recordType: %d\n", databasePageHeader.Index, databasePageHeader.Number, databasePageHeader.RecordType)
+
+		var g6EgvRecord G6EgvRecord
+
+		for record := uint32(0); record < databasePageHeader.Number; record++ {
+			err = binary.Read(buf, binary.LittleEndian, &g6EgvRecord)
+			if err == io.EOF {
+				fmt.Printf("EOF\n")
+				return nil, err
+			}
+			if err != nil {
+				return nil, err
+			}
+			baseTime := time.Date(2009, 1, 1, 0, 0, 0, 0, time.UTC)
+			systemTime := baseTime.Add(time.Duration(g6EgvRecord.SystemTime) * time.Second)
+			displayTime := baseTime.Add(time.Duration(g6EgvRecord.DisplayTime) * time.Second)
+
+			fmt.Printf("systemTime: %v, displayTime: %v, value: %d\n", systemTime, displayTime, g6EgvRecord.Value)
+
+			records = append(records, Record{
+				SystemTime:  systemTime,
+				DisplayTime: displayTime,
+				Value:       int(g6EgvRecord.Value),
+			})
+		}
+	}
+
+	return &records, nil
+}
+
+func ReadGlucoseUnit(device *serial.Port) (string, error) {
+	packet := buildCmdPacket(CmdReadGlucoseUnit)
+	_, err := device.Write(packet)
+	if err != nil {
+		return "", err
+	}
+	device.Flush()
+
+	pkt, err := ReadPacket(device)
+	if err != nil {
+		return "", err
+	}
+	if pkt.cmd != CmdAck {
+		return "", fmt.Errorf("command not acked")
+	}
+
+	fmt.Printf("payload: %x\n", pkt.payload)
+
+	glucoseUnit := GlucoseUnit(pkt.payload[0])
+	return glucoseUnit.String()
 }
